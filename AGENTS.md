@@ -94,5 +94,5 @@ PRRI/
   - [x] **Шаг 2:** Полноценная выгрузка данных с 2020 года и разработка `src/cleaner.py` (парсинг дат, нормализация заводов и лек. форм, доменная классификация брака Level 1–3, расчет PRRI, TDR, Series-per-Incident).
   - [x] **Шаг 3:** Проектирование БД (`src/database.py` на SQLAlchemy с поддержкой PostgreSQL 16 + SQLite fallback) и SQL-витрин (`sql/views.sql`, `sql/schema_postgres.sql`) с CTE и оконными функциями.
   - [x] **Шаг 4:** Ноутбук `notebooks/eda_and_hypotheses.ipynb` и модуль `src/stats_tests.py` с исследовательским анализом и проверкой 4 статистических гипотез (`scipy.stats`).
-  - [ ] **Шаг 5:** Разработка интерактивного веб-приложения `app.py` (Streamlit + Plotly).
+  - [x] **Шаг 5:** Разработка интерактивного веб-приложения `app.py` (Streamlit + Plotly, 4 аналитические вкладки, карточка риска поставщика с Radar Chart, калькулятор PRRI и живая синхронизация с API РЗН).
   - [ ] **Шаг 6:** Упаковка в `Dockerfile`, `docker-compose.yml`, настройка `.github/workflows/deploy.yml` и написание финального продающего `README.md`.
