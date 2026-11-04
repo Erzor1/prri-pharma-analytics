@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: prri_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pharma_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pharma_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-pharma_prri}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema_postgres.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pharma_user} -d ${POSTGRES_DB:-pharma_prri}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prri_dashboard
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-pharma_user}:${POSTGRES_PASSWORD:-pharma_pass}@postgres:5432/${POSTGRES_DB:-pharma_prri}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8501:8501"
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: prri_scheduler
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-pharma_user}:${POSTGRES_PASSWORD:-pharma_pass}@postgres:5432/${POSTGRES_DB:-pharma_prri}
+    volumes:
+      - ./data:/app/data
+    # Ежесуточная фоновая догрузка новых писем Росздравнадзора и обновление SQL-витрин в PostgreSQL
+    command: >
+      sh -c "while true; do
+        sleep 86400;
+        echo '[Scheduler] Запуск ежедневной синхронизации с API Росздравнадзора...';
+        python -m src.pipeline --incremental;
+      done"
+
+volumes:
+  pgdata:
