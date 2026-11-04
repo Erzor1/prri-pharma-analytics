@@ -1,0 +1,35 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Environment variables & secrets
+.env
+.env.*
+
+# Logs
+*.log
+logs/
+
+# Local data files (keep sample preview and directory structure)
+data/raw/*.json
+data/raw/*.csv
+!data/raw/sample_100.csv
+!data/raw/sample_100.json
+data/processed/*.csv
+data/processed/*.parquet
+
+# OS & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
