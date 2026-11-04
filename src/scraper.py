@@ -20,6 +20,7 @@ import pandas as pd
 import requests
 import urllib3
 from requests.adapters import HTTPAdapter
+from tqdm import tqdm
 from urllib3.util.retry import Retry
 
 # Обеспечиваем корректный вывод кириллицы в консоль Windows PowerShell
@@ -280,6 +281,8 @@ class RoszdravnadzorScraper:
                 records_total = int(data_json.get("recordsTotal") or 0)
                 total_available = records_filtered or records_total
                 prev_total = total_available
+                target_total = min(max_records, total_available) if max_records else total_available
+                pbar = tqdm(total=target_total, desc="Выгрузка РЗН", unit="зап.")
                 logger.info(
                     "Ответ API получен: всего записей по фильтру recordsFiltered=%d (recordsTotal=%d)",
                     records_filtered,
@@ -291,18 +294,16 @@ class RoszdravnadzorScraper:
                 logger.info("Пустой блок data[] на смещении start=%d. Выгрузка завершена.", start)
                 break
 
+            added_in_batch = 0
             for item in batch:
                 raw_rows.append(item)
                 parsed_rows.append(parse_record(item))
+                added_in_batch += 1
                 if max_records is not None and len(parsed_rows) >= max_records:
                     break
 
-            logger.info(
-                "Загружено %d / %s записей (текущий offset start=%d)",
-                len(parsed_rows),
-                max_records if max_records is not None else total_available,
-                start,
-            )
+            if "pbar" in locals():
+                pbar.update(added_in_batch)
 
             if max_records is not None and len(parsed_rows) >= max_records:
                 break
@@ -313,6 +314,10 @@ class RoszdravnadzorScraper:
             draw += 1
             time.sleep(self.sleep_between_requests)
 
+        if "pbar" in locals():
+            pbar.close()
+
+        logger.info("Выгрузка успешно завершена: получено %d записей.", len(parsed_rows))
         return parsed_rows, raw_rows
 
 
