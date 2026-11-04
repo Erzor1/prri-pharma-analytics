@@ -27,6 +27,7 @@ data/raw/*.csv
 !data/raw/sample_100.json
 data/processed/*.csv
 data/processed/*.parquet
+data/processed/*.db
 
 # OS & IDE files
 .DS_Store

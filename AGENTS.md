@@ -92,7 +92,7 @@ PRRI/
 - **План этапов:**
   - [x] **Шаг 1:** Инициализация структуры, `AGENTS.md`, `.gitignore`, `requirements.txt`, Git и прототип `src/scraper.py` (тест на живых данных РЗН, первые 100 строк).
   - [x] **Шаг 2:** Полноценная выгрузка данных с 2020 года и разработка `src/cleaner.py` (парсинг дат, нормализация заводов и лек. форм, доменная классификация брака Level 1–3, расчет PRRI, TDR, Series-per-Incident).
-  - [ ] **Шаг 3:** Проектирование БД (`src/database.py`) и SQL-витрин (`sql/views.sql`) с CTE и оконными функциями.
+  - [x] **Шаг 3:** Проектирование БД (`src/database.py` на SQLAlchemy с поддержкой PostgreSQL 16 + SQLite fallback) и SQL-витрин (`sql/views.sql`, `sql/schema_postgres.sql`) с CTE и оконными функциями.
   - [ ] **Шаг 4:** Ноутбук `notebooks/eda_and_hypotheses.ipynb` с исследовательским анализом и проверкой статистических гипотез (`scipy.stats`).
   - [ ] **Шаг 5:** Разработка интерактивного веб-приложения `app.py` (Streamlit + Plotly).
   - [ ] **Шаг 6:** Упаковка в `Dockerfile`, `docker-compose.yml`, настройка `.github/workflows/deploy.yml` и написание финального продающего `README.md`.
