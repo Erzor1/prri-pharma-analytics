@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.cleaner import build_cleaned_dataset
-from src.database import DEFAULT_SQLITE_PATH, get_db_engine, init_database, query_df
+from src.database import get_db_engine, init_database, query_df
 from src.scraper import RoszdravnadzorScraper
 from src.stats_tests import run_all_hypothesis_tests
 
@@ -26,24 +26,69 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Кастомная стилизация карточек и бейджей
+# Кастомные стили для карточек KPI (без обрезки текста и без ложных зеленых стрелок st.metric)
 st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 1.4rem;
+        padding-top: 1.2rem;
         padding-bottom: 2rem;
     }
-    div[data-testid="stMetric"] {
-        background-color: rgba(28, 131, 225, 0.06);
-        border: 1px solid rgba(28, 131, 225, 0.2);
-        padding: 12px 16px;
-        border-radius: 10px;
+    .kpi-card {
+        background: rgba(28, 131, 225, 0.05);
+        border: 1px solid rgba(28, 131, 225, 0.22);
+        border-radius: 12px;
+        padding: 14px 16px;
+        height: 100%;
+        min-height: 118px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .kpi-title {
+        font-size: 0.86rem;
+        font-weight: 600;
+        color: #4a5568;
+        line-height: 1.25;
+        margin-bottom: 6px;
+        white-space: normal;
+        word-wrap: break-word;
+    }
+    .kpi-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #1a202c;
+        line-height: 1.15;
+        margin-bottom: 6px;
+    }
+    .kpi-sub {
+        font-size: 0.80rem;
+        color: #2b6cb0;
+        background: rgba(43, 108, 176, 0.10);
+        padding: 4px 8px;
+        border-radius: 6px;
+        line-height: 1.3;
+        white-space: normal;
+        word-wrap: break-word;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def render_kpi_card(title: str, value: str, subtitle: str) -> None:
+    """Рендерит адаптивную карточку KPI, где весь текст виден полностью без троеточий и стрелок."""
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+            <div class="kpi-title">{title}</div>
+            <div class="kpi-value">{value}</div>
+            <div class="kpi-sub">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def ensure_data_ready() -> None:
@@ -100,7 +145,7 @@ def load_hypothesis_results() -> dict:
 
 
 def trigger_incremental_update() -> tuple[int, str]:
-    """Догружает свежие записи за последние 30 дней из API Росздравнадзора и пересчитывает БД."""
+    """Догружает свежие записи из API Росздравнадзора и пересчитывает БД."""
     raw_path = Path("data/raw/rzn_full_raw.csv")
     scraper = RoszdravnadzorScraper()
     fresh_rows, _ = scraper.fetch_records(date_from="01.01.2026", page_size=200, max_records=200)
@@ -170,7 +215,7 @@ def main() -> None:
         )
 
         only_verified = st.toggle(
-            "Только верифицированные лабораторные дефекты (Level 1–3)",
+            "Только подтвержденный лабораторный брак (Level 1–3)",
             value=True,
             help=(
                 "Исключает превентивные отзывы производителей без указанного показателя брака "
@@ -237,32 +282,38 @@ def main() -> None:
         spi_val = round(total_batches / max(1, unique_letters_cnt), 2)
 
         k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric(
-            "Забракованных серий (в выборке)",
-            f"{total_batches:,}".replace(",", " "),
-            f"{unique_letters_cnt} писем РЗН",
-        )
-        k2.metric(
-            "Доля тех. и крит. брака (TDR)",
-            f"{tdr_val}%",
-            f"{tech_crit_cnt} серий Level 2 + Level 3",
-        )
-        k3.metric(
-            "Суммарный индекс риска PRRI",
-            f"{total_prri_val:,.1f}".replace(",", " "),
-            "С учетом Recency Decay",
-        )
-        k4.metric(
-            "Глубина поражения (Series/Letter)",
-            f"{spi_val}",
-            "Среднее число серий на письмо",
-        )
-        k5.metric(
-            "Площадок Critical Risk",
-            f"{critical_mfg_cnt}",
-            f"из {len(df_mfg_rank)} производителей",
-        )
+        with k1:
+            render_kpi_card(
+                "Забракованных серий (в выборке)",
+                f"{total_batches:,}".replace(",", " "),
+                f"По {unique_letters_cnt} информ. письмам РЗН",
+            )
+        with k2:
+            render_kpi_card(
+                "Доля тех. и крит. брака (TDR)",
+                f"{tdr_val}%",
+                f"{tech_crit_cnt} серий (Level 2 формы + Level 3 АФС)",
+            )
+        with k3:
+            render_kpi_card(
+                "Суммарный индекс риска PRRI",
+                f"{total_prri_val:,.1f}".replace(",", " "),
+                "Взвешенный скор с учетом давности",
+            )
+        with k4:
+            render_kpi_card(
+                "Глубина поражения (Series / Letter)",
+                f"{spi_val}",
+                "Среднее число серий в одном письме",
+            )
+        with k5:
+            render_kpi_card(
+                "Площадок Critical Risk",
+                f"{critical_mfg_cnt}",
+                f"Из {len(df_mfg_rank)} производителей в базе",
+            )
 
+        st.markdown("<div style='margin-top: 18px;'></div>", unsafe_allow_html=True)
         st.markdown("#### 📈 Помесячная динамика забраковок и скользящее среднее `MA(3)` (SQL Window View)")
         df_m_sub = df_monthly[
             (df_monthly["year"] >= selected_years[0]) & (df_monthly["year"] <= selected_years[1])
@@ -304,7 +355,7 @@ def main() -> None:
         )
         fig_dyn.update_layout(
             barmode="stack",
-            height=420,
+            height=410,
             margin=dict(l=20, r=20, t=30, b=20),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
             xaxis_title="Месяц публикации письма РЗН",
@@ -312,80 +363,139 @@ def main() -> None:
         )
         st.plotly_chart(fig_dyn, width="stretch")
 
-        col_left, col_right = st.columns([1.15, 0.85])
-        with col_left:
-            st.markdown("#### 🧪 Структура брака по фармакопейно-технологическим категориям")
-            cat_agg = (
-                verified_sub.groupby(["defect_level", "defect_category"], as_index=False)
-                .agg(batches=("batch_number", "count"), prri=("prri_incident_score", "sum"))
-                .sort_values("batches", ascending=True)
-            )
-            color_map = {
-                "Level 3: Критический брак АФС и микробиологии (5.0)": "#d62728",
-                "Level 2: Технологический брак формы (2.5)": "#ff7f0e",
-                "Level 1: Логистика и упаковка (1.0)": "#1f77b4",
-            }
-            fig_cat = px.bar(
-                cat_agg,
-                x="batches",
-                y="defect_category",
-                color="defect_level",
-                orientation="h",
-                text="batches",
-                color_discrete_map=color_map,
-                labels={
-                    "batches": "Забракованных серий",
-                    "defect_category": "Категория несоответствия",
-                    "defect_level": "Уровень критичности",
-                },
-            )
-            fig_cat.update_traces(textposition="outside")
-            fig_cat.update_layout(
-                height=430,
-                margin=dict(l=10, r=30, t=20, b=20),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-            )
-            st.plotly_chart(fig_cat, width="stretch")
+        st.divider()
+        st.markdown("#### 🧪 Структура брака по фармакопейно-технологическим категориям")
+        cat_agg = (
+            verified_sub.groupby(["defect_level", "defect_category"], as_index=False)
+            .agg(batches=("batch_number", "count"), prri=("prri_incident_score", "sum"))
+            .sort_values("batches", ascending=True)
+        )
+        color_map = {
+            "Level 3: Критический брак АФС и микробиологии (5.0)": "#d62728",
+            "Level 2: Технологический брак формы (2.5)": "#ff7f0e",
+            "Level 1: Логистика и упаковка (1.0)": "#1f77b4",
+        }
+        max_batches_cat = int(cat_agg["batches"].max()) if not cat_agg.empty else 100
+        fig_cat = px.bar(
+            cat_agg,
+            x="batches",
+            y="defect_category",
+            color="defect_level",
+            orientation="h",
+            text="batches",
+            color_discrete_map=color_map,
+            labels={
+                "batches": "Забракованных серий",
+                "defect_category": "Категория несоответствия",
+                "defect_level": "Уровень критичности",
+            },
+        )
+        fig_cat.update_traces(textposition="outside", cliponaxis=False)
+        fig_cat.update_layout(
+            height=430,
+            xaxis=dict(range=[0, max_batches_cat * 1.16]),
+            margin=dict(l=10, r=60, t=35, b=20),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        )
+        st.plotly_chart(fig_cat, width="stretch")
 
-        with col_right:
-            st.markdown("#### 💊 Топ-12 препаратов по индексу технологического риска PRRI")
-            top_drugs = (
-                verified_sub.groupby(["trade_name", "manufacturer_clean", "defect_category"], as_index=False)
-                .agg(
-                    Серий=("batch_number", "count"),
-                    Писем=("letter_number", "nunique"),
-                    PRRI=("prri_incident_score", lambda s: round(float(s.sum()), 1)),
-                )
-                .sort_values("PRRI", ascending=False)
-                .head(12)
+        st.divider()
+        st.markdown("#### 💊 Поиск и рейтинг препаратов по индексу технологического риска PRRI")
+        st.caption(
+            "Вы можете найти любой интересующий препарат или производителя через поиск ниже, "
+            "а также расширить таблицу до любого количества позиций."
+        )
+
+        all_drugs_agg = (
+            verified_sub.groupby(
+                ["trade_name", "manufacturer_clean", "origin_type", "dosage_form_short", "defect_category", "defect_level"],
+                as_index=False,
             )
-            st.dataframe(
-                top_drugs.rename(
-                    columns={
-                        "trade_name": "Торговое наименование",
-                        "manufacturer_clean": "Производитель",
-                        "defect_category": "Основной показатель брака",
-                    }
-                ),
-                width="stretch",
-                hide_index=True,
-                height=400,
+            .agg(
+                Серий=("batch_number", "count"),
+                Писем=("letter_number", "nunique"),
+                PRRI=("prri_incident_score", lambda s: round(float(s.sum()), 2)),
+                Последнее_письмо=("letter_date", "max"),
             )
+            .sort_values(["PRRI", "Серий"], ascending=False)
+            .reset_index(drop=True)
+        )
+        all_drugs_agg.insert(0, "Ранг", np.arange(1, len(all_drugs_agg) + 1))
+
+        f_col1, f_col2 = st.columns([2.2, 1.0])
+        with f_col1:
+            drug_search_query = st.text_input(
+                "🔎 Поиск препарата (по торговому наименованию, производителю или показателю брака):",
+                value="",
+                placeholder="Например: Эналаприл, Цитрамон, Ибупрофен, Спиронолактон, Велфарм...",
+            )
+        with f_col2:
+            max_drugs_total = max(10, len(all_drugs_agg))
+            top_n_drugs = st.selectbox(
+                "Количество отображаемых позиций:",
+                options=[15, 30, 50, 100, 250, max_drugs_total],
+                index=2,
+                format_func=lambda x: f"Все ({x})" if x == max_drugs_total else f"Топ-{x} позиций",
+            )
+
+        filtered_drugs_df = all_drugs_agg.copy()
+        if drug_search_query.strip():
+            q = drug_search_query.strip().lower()
+            mask = (
+                filtered_drugs_df["trade_name"].astype(str).str.lower().str.contains(q, na=False)
+                | filtered_drugs_df["manufacturer_clean"].astype(str).str.lower().str.contains(q, na=False)
+                | filtered_drugs_df["defect_category"].astype(str).str.lower().str.contains(q, na=False)
+            )
+            filtered_drugs_df = filtered_drugs_df[mask]
+
+        st.dataframe(
+            filtered_drugs_df.head(int(top_n_drugs)).rename(
+                columns={
+                    "trade_name": "Торговое наименование",
+                    "manufacturer_clean": "Производитель",
+                    "origin_type": "Локализация",
+                    "dosage_form_short": "Лекарственная форма",
+                    "defect_category": "Основной показатель брака",
+                    "defect_level": "Уровень критичности",
+                    "Последнее_письмо": "Последнее письмо РЗН",
+                }
+            ),
+            width="stretch",
+            hide_index=True,
+            height=440,
+        )
 
     # =========================================================================
     # ВКЛАДКА 2: РЕЙТИНГ И СКОРИНГ ПРОИЗВОДИТЕЛЕЙ (PRRI)
     # =========================================================================
     with tab2:
-        st.markdown("#### 🎯 Матрица риска поставщиков: `PRRI Score × Доля тех. брака TDR (%)`")
+        st.markdown("#### 🎯 Наглядное сравнение заводов по индексу риска `PRRI` и доле тех. брака `TDR (%)`")
         st.info(
-            "💡 **Продуктовый кейс валидации метрики:** Обратите внимание на точку **«Юнифарм Инк»** внизу справа "
-            "(135 отозванных серий, но **TDR = 0.0%** — 100% инцидентов связаны только с маркировкой и упаковкой). "
-            "В обычном количественном отчете такой поставщик попал бы в черный список, тогда как наша матрица "
-            "`PRRI × TDR` автоматически отделяет упаковочный сбой (`Packaging Risk`) от заводов с критическим "
-            "распадом АФС и провалом растворения (`ООО \"ПРАНАФАРМ\"`, `ПАО \"Биосинтез\"`, `АО \"ВЕРОФАРМ\"`, `ООО \"Озон\"`)."
+            "💡 **Почему важны обе метрики (`PRRI` и `TDR %`):** "
+            "Например, у компании **«Юнифарм Инк»** отозвано 135 серий, но **TDR = 0%** (все 100% проблем — опечатки маркировки и упаковки). "
+            "А у заводов из группы **Critical Risk** (`ООО \"ПРАНАФАРМ\"`, `ПАО \"Биосинтез\"`, `АО \"ВЕРОФАРМ\"`, `ООО \"Озон\"`) "
+            "**TDR > 95%** — то есть почти каждая забраковка связана с химическим распадом субстанции или нерастворением таблетки."
         )
 
-        mfg_plot_df = df_mfg_rank[df_mfg_rank["explicit_defects_count"] >= 3].copy()
+        ctrl1, ctrl2 = st.columns([1.4, 1.0])
+        with ctrl1:
+            chart_mode = st.radio(
+                "Формат визуализации лидеров антирейтинга:",
+                options=[
+                    "📊 Рейтинг Топ-N заводов по PRRI (с указанием TDR %)",
+                    "🧭 Карта рисков: Количество тех. серий vs Индекс PRRI (с подписями заводов)",
+                ],
+                horizontal=True,
+            )
+        with ctrl2:
+            top_n_mfg_chart = st.slider(
+                "Число заводов на графике:",
+                min_value=10,
+                max_value=40,
+                value=20,
+                step=5,
+            )
+
         tier_colors = {
             "Critical Risk (Критический тех. риск)": "#d62728",
             "High Risk (Системный тех. брак)": "#ff7f0e",
@@ -393,35 +503,91 @@ def main() -> None:
             "Packaging Risk (Преимущественно упаковка/маркировка)": "#1f77b4",
             "Low Risk (Низкий / единичный риск)": "#2ca02c",
         }
-        fig_scatter = px.scatter(
-            mfg_plot_df,
-            x="tdr_pct",
-            y="prri_score",
-            size="explicit_defects_count",
-            color="risk_tier",
-            hover_name="manufacturer_clean",
-            hover_data={
-                "origin_type": True,
-                "prri_score": True,
-                "tdr_pct": True,
-                "explicit_defects_count": True,
-                "series_per_incident": True,
-                "primary_defect_category": True,
-            },
-            log_y=True,
-            size_max=42,
-            color_discrete_map=tier_colors,
-            labels={
-                "tdr_pct": "TDR (%) — Доля технологического и критического брака (Level 2 + Level 3)",
-                "prri_score": "Индекс риска PRRI (лог. шкала)",
-                "risk_tier": "Категория риска (Risk Tier)",
-                "explicit_defects_count": "Верифицированных серий",
-            },
-        )
-        fig_scatter.add_vline(x=40.0, line_dash="dash", line_color="gray", annotation_text="Граница Packaging / Tech Risk (TDR=40%)")
-        fig_scatter.add_hline(y=150.0, line_dash="dot", line_color="#d62728", annotation_text="Порог Critical Risk (PRRI=150)")
-        fig_scatter.update_layout(height=450, margin=dict(l=20, r=20, t=30, b=20))
-        st.plotly_chart(fig_scatter, width="stretch")
+
+        mfg_top_df = df_mfg_rank.head(top_n_mfg_chart).copy()
+
+        if chart_mode.startswith("📊"):
+            mfg_bar_df = mfg_top_df.sort_values("prri_score", ascending=True).copy()
+            mfg_bar_df["label_text"] = mfg_bar_df.apply(
+                lambda r: f"PRRI: {r['prri_score']} | TDR: {r['tdr_pct']}% ({int(r['explicit_defects_count'])} сер.)",
+                axis=1,
+            )
+            max_prri_val = float(mfg_bar_df["prri_score"].max()) if not mfg_bar_df.empty else 100.0
+            fig_mfg = px.bar(
+                mfg_bar_df,
+                x="prri_score",
+                y="manufacturer_clean",
+                color="risk_tier",
+                orientation="h",
+                text="label_text",
+                color_discrete_map=tier_colors,
+                hover_data={
+                    "origin_type": True,
+                    "tdr_pct": True,
+                    "explicit_defects_count": True,
+                    "series_per_incident": True,
+                    "primary_defect_category": True,
+                    "label_text": False,
+                },
+                labels={
+                    "prri_score": "Индекс технологического риска PRRI",
+                    "manufacturer_clean": "Производитель",
+                    "risk_tier": "Категория риска (Risk Tier)",
+                },
+            )
+            fig_mfg.update_traces(textposition="outside", cliponaxis=False)
+            fig_mfg.update_layout(
+                height=max(460, top_n_mfg_chart * 26),
+                xaxis=dict(range=[0, max_prri_val * 1.28]),
+                margin=dict(l=20, r=80, t=30, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_mfg, width="stretch")
+        else:
+            # Наглядная карта без сжатия в 100%: ось X — число серий с браком (лог. шкала), ось Y — PRRI (лог. шкала)
+            mfg_map_df = mfg_top_df.copy()
+            mfg_map_df["short_name"] = mfg_map_df["manufacturer_clean"].str.replace(
+                "Не установлен (фальсификат / без маркировки)", "Фальсификат без маркировки", regex=False
+            )
+            fig_scatter = px.scatter(
+                mfg_map_df,
+                x="explicit_defects_count",
+                y="prri_score",
+                size="series_per_incident",
+                color="risk_tier",
+                text="short_name",
+                hover_name="manufacturer_clean",
+                hover_data={
+                    "origin_type": True,
+                    "prri_score": True,
+                    "tdr_pct": True,
+                    "explicit_defects_count": True,
+                    "series_per_incident": True,
+                    "primary_defect_category": True,
+                    "short_name": False,
+                },
+                log_x=True,
+                log_y=True,
+                size_max=34,
+                color_discrete_map=tier_colors,
+                labels={
+                    "explicit_defects_count": "Количество забракованных серий Level 1–3 (лог. шкала)",
+                    "prri_score": "Индекс технологического риска PRRI (лог. шкала)",
+                    "risk_tier": "Категория риска (Risk Tier)",
+                    "series_per_incident": "Серий на 1 письмо",
+                },
+            )
+            fig_scatter.update_traces(
+                textposition="top center",
+                textfont=dict(size=10),
+                marker=dict(line=dict(width=1, color="#333333"), opacity=0.88),
+            )
+            fig_scatter.update_layout(
+                height=520,
+                margin=dict(l=20, r=40, t=40, b=20),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig_scatter, width="stretch")
 
         st.markdown("#### 🏆 Полный рейтинг производителей (SQL-витрина `v_manufacturer_risk_ranking` с кривой Парето)")
         st.dataframe(
@@ -458,7 +624,7 @@ def main() -> None:
             ),
             width="stretch",
             hide_index=True,
-            height=340,
+            height=360,
         )
 
         st.divider()
@@ -476,20 +642,33 @@ def main() -> None:
         ].sort_values("letter_date", ascending=False)
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Индекс риска PRRI", f"{mfg_row['prri_score']}", f"Ранг #{int(mfg_row['overall_risk_rank'])} на рынке")
-        c2.metric("Доля тех. брака (TDR)", f"{mfg_row['tdr_pct']}%", mfg_row["risk_tier"].split("(")[0].strip())
-        c3.metric(
-            "Забраковано серий / писем",
-            f"{int(mfg_row['explicit_defects_count'])} / {int(mfg_row['unique_letters'])}",
-            f"Глубина: {mfg_row['series_per_incident']} сер./письмо",
-        )
-        c4.metric(
-            "Главная технологическая проблема",
-            f"{int(mfg_row['primary_defect_batches'])} сер.",
-            mfg_row["primary_defect_category"],
-        )
+        with c1:
+            render_kpi_card(
+                "Индекс риска PRRI",
+                f"{mfg_row['prri_score']}",
+                f"Ранг #{int(mfg_row['overall_risk_rank'])} из {len(df_mfg_rank)} на рынке РФ",
+            )
+        with c2:
+            render_kpi_card(
+                "Доля тех. брака (TDR)",
+                f"{mfg_row['tdr_pct']}%",
+                f"Категория: {mfg_row['risk_tier']}",
+            )
+        with c3:
+            render_kpi_card(
+                "Забраковано серий / писем РЗН",
+                f"{int(mfg_row['explicit_defects_count'])} / {int(mfg_row['unique_letters'])}",
+                f"Средняя глубина: {mfg_row['series_per_incident']} серий на письмо",
+            )
+        with c4:
+            render_kpi_card(
+                "Главная технологическая проблема завода",
+                f"{int(mfg_row['primary_defect_batches'])} сер.",
+                f"{mfg_row['primary_defect_category']}",
+            )
 
-        r_left, r_right = st.columns([0.9, 1.1])
+        st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
+        r_left, r_right = st.columns([1.0, 1.25], gap="large")
         with r_left:
             radar_cats = [
                 "Родственные и посторонние примеси (стабильность АФС)",
@@ -527,9 +706,9 @@ def main() -> None:
             )
             fig_radar.update_layout(
                 polar=dict(radialaxis=dict(visible=True, rangemode="tozero")),
-                title=f"Профиль дефектов: {selected_mfg}",
-                height=380,
-                margin=dict(l=40, r=40, t=50, b=30),
+                title=dict(text=f"Профиль дефектов: {selected_mfg}", font=dict(size=14)),
+                height=400,
+                margin=dict(l=75, r=75, t=55, b=45),
             )
             st.plotly_chart(fig_radar, width="stretch")
 
@@ -567,7 +746,7 @@ def main() -> None:
                 },
                 width="stretch",
                 hide_index=True,
-                height=350,
+                height=380,
             )
 
     # =========================================================================
@@ -595,13 +774,50 @@ def main() -> None:
         fig_heat.update_layout(height=420, margin=dict(l=20, r=20, t=30, b=20))
         st.plotly_chart(fig_heat, width="stretch")
 
+        st.divider()
         st.markdown("#### 🔁 Витрина хронических серийных рецидивов по препаратам (`v_chronic_drug_recidivism`)")
         st.caption(
             "Рассчитано в SQL через оконные функции `LAG(letter_date) OVER (PARTITION BY manufacturer, drug, defect)` "
             "и `DENSE_RANK()`. Позволяет отличить разовый отзыв партии от многолетней неотвалидированной технологии."
         )
+
+        ch_col1, ch_col2, ch_col3 = st.columns([1.6, 1.0, 1.0])
+        with ch_col1:
+            chronic_search = st.text_input(
+                "🔎 Фильтр по препарату, производителю или дефекту:",
+                value="",
+                placeholder="Например: Эналаприл, Растворение, Примеси...",
+                key="chronic_search_input",
+            )
+        with ch_col2:
+            min_prri_chronic = st.slider(
+                "Минимальный порог PRRI кейса:",
+                min_value=0.0,
+                max_value=200.0,
+                value=0.0,
+                step=5.0,
+            )
+        with ch_col3:
+            max_chronic_rows = len(df_chronic)
+            chronic_limit = st.selectbox(
+                "Показывать строк в витрине:",
+                options=[50, 100, 200, max_chronic_rows],
+                index=1,
+                format_func=lambda x: f"Все ({x} кейсов)" if x == max_chronic_rows else f"Топ-{x} кейсов",
+            )
+
+        df_chronic_view = df_chronic[df_chronic["drug_defect_prri_score"] >= min_prri_chronic].copy()
+        if chronic_search.strip():
+            cq = chronic_search.strip().lower()
+            cmask = (
+                df_chronic_view["trade_name"].astype(str).str.lower().str.contains(cq, na=False)
+                | df_chronic_view["manufacturer_clean"].astype(str).str.lower().str.contains(cq, na=False)
+                | df_chronic_view["defect_category"].astype(str).str.lower().str.contains(cq, na=False)
+            )
+            df_chronic_view = df_chronic_view[cmask]
+
         st.dataframe(
-            df_chronic.head(25)[
+            df_chronic_view.head(int(chronic_limit))[
                 [
                     "chronic_case_rank",
                     "manufacturer_clean",
@@ -632,45 +848,62 @@ def main() -> None:
             ),
             width="stretch",
             hide_index=True,
-            height=360,
+            height=520,
         )
 
-        st.markdown("#### 🔬 Экспертный разбор реальных R&D-кейсов из реестра Росздравнадзора (комментарий технолога)")
+        st.divider()
+        st.markdown("#### 🔬 Экспертный разбор реальных R&D-кейсов из реестра Росздравнадзора")
+        st.info(
+            "**📌 Откуда взяты эти кейсы и зачем они нужны бизнесу?**\n\n"
+            "1. **Источник фактов:** Все цифры ниже (конкретные препараты, заводы, количество отозванных серий и точные формулировки брака из поля `col11`) "
+            "**напрямую выгружены из витрины рецидивов `v_chronic_drug_recidivism`**.\n"
+            "2. **Источник интерпретации:** Объяснение физико-химических и технологических механизмов брака выполнено на базе **6-летнего опыта автора в R&D фармацевтики** "
+            "(разработка ТЛФ, валидация, изучение стабильности и расследование OOS).\n"
+            "3. **Практическая ценность для бизнеса:**\n"
+            "   - **Для закупок (аптечные сети, дистрибьюторы, тендерные отделы):** Позволяет отличить случайный сбой партии от *хронической нестабильности рецептуры*. "
+            "Если препарат годами отзывается по деградации субстанции (как Эналаприл или Цитрамон у конкретных заводов), новые поставки с высокой вероятностью снова попадут под отзыв РЗН через 6–12 месяцев хранения — закупщик несет прямые убытки на возврат и заморозку стока.\n"
+            "   - **Для R&D и дирекции по качеству (QA/QC):** Дает готовый реестр критических точек контроля (CAPA) при разработке дженериков, смене поставщика АФС и выборе барьерной упаковки."
+        )
+
         e1, e2 = st.columns(2)
         with e1:
             with st.expander("1️⃣ Кейс «Растворение» ТЛФ: Спиронолактон (32 серии), Ибупрофен Велфарм, Танацехол (14 серий)", expanded=True):
                 st.markdown(
                     """
-                    - **Наблюдение в данных:** 547 забракованных серий ТЛФ по тесту «Растворение» и «Распадаемость» (`20.0%` всех дефектов таблеток и капсул).
+                    - **Факт из базы РЗН:** 547 забракованных серий ТЛФ по тесту «Растворение» и «Распадаемость» (`20.0%` всех дефектов таблеток и капсул). У препарата «Спиронолактон» (ООО «ПРАНАФАРМ») — 32 отозванные серии в 19 письмах.
                     - **Технологическая причина (R&D):**
-                      1. **Смена поставщика или гранулометрии гидрофобной АФС:** для плохо растворимых субстанций (BCS Class II — спиронолактон, ибупрофен) укрупнение размера частиц $d_{90}$ или изменение полиморфной модификации без пересмотра количества супердезинтегранта (кроскармеллозы натрия / натрия крахмала гликолята) и режима влажной грануляции обрушивает профиль высвобождения за 45 минут.
-                      2. **Перепрессовка и старение оболочки:** избыточное усилие прессования на роторном таблетпрессе или сшивка (cross-linking) желатина капсул в присутствии следов альдегидов во вспомогательных веществах.
+                      - Для плохо растворимых в воде субстанций (BCS Class II — спиронолактон, ибупрофен) смена поставщика АФС с более крупным размером частиц ($d_{90}$) без адаптации количества дезинтегранта и режима грануляции резко замедляет растворение.
+                      - Дополнительный фактор — перепрессовка таблетки или «сшивка» (cross-linking) желатина капсул при хранении.
+                    - **Решение для бизнеса и R&D:** Входной контроль гранулометрии АФС (лазерная дифракция) и стресс-тест растворения в 3 средах pH перед закупкой новой серии субстанции.
                     """
                 )
             with st.expander("2️⃣ Кейс «Родственные примеси»: Эналаприл (108 серий в 47 письмах) и Капотен (каптоприла дисульфид)", expanded=True):
                 st.markdown(
                     """
-                    - **Наблюдение в данных:** у ПАО «Биосинтез» по препарату «Эналаприл» вышло **47 отдельных писем РЗН** (108 серий) по показателю «Родственные примеси».
+                    - **Факт из базы РЗН:** у ПАО «Биосинтез» по препарату «Эналаприл» вышло **47 отдельных писем РЗН** (108 серий подряд за 2023–2024 гг.) по показателю «Родственные примеси»; у «Капотена» — отзыв по специфической примеси `Каптоприла дисульфид`.
                     - **Химико-технологическая причина:**
-                      - Молекула эналаприла малеата крайне чувствительна к влаге и кислотности микроокружения таблетки: идут две конкурирующие реакции деградации — гидролиз до **эналаприлата** и внутримолекулярная циклизация до **дикетопиперазинового производного**.
-                      - В «Капотене» (каптоприл) свободная тиольная группа $-\\text{SH}$ легко окисляется кислородом воздуха в присутствии следов ионов тяжелых металлов до **дисульфида каптоприла**. Требуется жесткий контроль остаточной влаги гранулята (LOD) и барьерных свойств блистера (ПВХ/ПВДХ или Ал/Ал).
+                      - Эналаприла малеат во влажной среде и при неоптимальном pH таблеточной массы распадается до **эналаприлата** и циклизуется в **дикетопиперазин**.
+                      - Каптоприл окисляется по тиольной группе $-\\text{SH}$ кислородом воздуха до дисульфида.
+                    - **Решение для бизнеса и R&D:** Жесткий контроль остаточной влаги гранулята (LOD) и перевод препарата из обычного ПВХ-блистера в высокобарьерный блистер **Ал/Ал (холодная формовка)** или ПВХ/ПВДХ.
                     """
                 )
         with e2:
             with st.expander("3️⃣ Кейс гидролиза АСК: Цитрамон П (27 серий в 25 письмах — свободная салициловая кислота)", expanded=True):
                 st.markdown(
                     """
-                    - **Наблюдение в данных:** хронический отзыв серий «Цитрамона П» по комбинации показателей `Описание; Родственные примеси (салициловая кислота)` и `Количественное определение`.
+                    - **Факт из базы РЗН:** регулярный отзыв серий «Цитрамона П» (ОАО «ДАЛЬХИМФАРМ», 25 писем за 2020–2026 гг.) по показателям `Описание; Родственные примеси (салициловая кислота)` и `Количественное определение`.
                     - **Химико-технологическая причина:**
-                      - В присутствии свободной влаги (из крахмала или при негерметичной контурной ячейковой упаковке) ацетилсалициловая кислота подвергается автокаталитическому эфирному гидролизу с отщеплением уксусной кислоты и кристаллизацией **салициловой кислоты** (игольчатые кристаллы на поверхности таблетки — отсюда одновременный брак по «Описанию» и «Родственным примесям»).
+                      - При избыточной влаге крахмала или негерметичной упаковке ацетилсалициловая кислота подвергается гидролизу с отщеплением уксусной кислоты и ростом кристаллов **салициловой кислоты** (одновременный провал по «Описанию» и «Примесям»).
+                    - **Решение для бизнеса и R&D:** Для дистрибьюторов — не закупать длинный сток препарата у площадок с историей гидролиза АСК; для технологов — использование предварительно высушенных эксципиентов с низкой активностью воды ($a_w$).
                     """
                 )
             with st.expander("4️⃣ Кейс парентеральных форм: Механические включения (153 серии инъекционных растворов)", expanded=True):
                 st.markdown(
                     """
-                    - **Наблюдение в данных:** у производителей ампульных и инфузионных препаратов (`ФКП «Армавирская биофабрика»`, `ОАО «Самарамедпром»` и др.) `Механические включения` и `Прозрачность/Цветность` формируют ядро технологического брака.
+                    - **Факт из базы РЗН:** у производителей ампульных и инфузионных растворов (`ФКП «Армавирская биофабрика»` — 24 серии, `ОАО «Самарамедпром»` и др.) `Механические включения` и `Прозрачность` являются главной причиной отзывов.
                     - **Технологическая причина:**
-                      - Нарушение целостности мембранных стерилизующих фильтров ($0.22\\ \\mu\\text{m}$), образование сколов стекла при запайке ампул газовыми горелками или выщелачивание/деламинация боросиликатного стекла при автоклавировании растворов со щелочным pH.
+                      - Проскок микрочастиц через мембранные фильтры ($0.22\\ \\mu\\text{m}$), микросколы стекла при запайке ампул или деламинация (отслоение чешуек кремнезема) стекла при автоклавировании.
+                    - **Решение для бизнеса и R&D:** Переход на ампулы 1-го гидролитического класса (боросиликатное стекло) и 100% автоматическая оптическая инспекция ампул после стерилизации.
                     """
                 )
 
@@ -678,45 +911,52 @@ def main() -> None:
     # ВКЛАДКА 4: ПРОВЕРКА СТАТ. ГИПОТЕЗ И МЕТОДОЛОГИЯ РАСЧЕТА PRRI
     # =========================================================================
     with tab4:
-        st.markdown("### 📐 Математическая модель индекса PRRI (Pharma Recall Risk Index)")
+        st.markdown("### 📐 Как устроен индекс риска PRRI (простыми словами)")
+        st.markdown(
+            "Если оценивать заводы просто по количеству отозванных серий, то компания с опечаткой на 100 пачках витаминов "
+            "будет выглядеть «опаснее», чем завод, выпустивший 10 серий токсичного инъекционного препарата. "
+            "Чтобы решить эту проблему, мы разработали индекс **PRRI (Pharma Recall Risk Index)**, который перемножает **4 понятных фактора** для каждой забракованной серии:"
+        )
         st.latex(
             r"\text{PRRI} = \sum_{i=1}^{N} \left( W_{\text{defect}, i} \times W_{\text{action}, i} \times W_{\text{chronic}, i} \times e^{-\lambda \cdot \Delta t_i} \right)"
         )
-        m_col1, m_col2 = st.columns([1.15, 0.85])
+
+        m_col1, m_col2 = st.columns([1.15, 0.85], gap="large")
         with m_col1:
             st.markdown(
                 """
-                1. **$W_{\\text{defect}, i}$ — Доменный вес критичности дефекта (классификация химика-аналитика):**
-                   - **Level 1 (`1.0`) — Упаковка и логистика:** *Маркировка, Упаковка, Комплектность*. Не несет фармакологического риска для пациента.
-                   - **Level 2 (`2.5`) — Технологический брак формы:** *Растворение, Распадаемость, Однородность дозирования, Средняя масса, Описание, Механические включения, pH, Осмоляльность*. Сбой техпроцесса производства формы.
-                   - **Level 3 (`5.0`) — Критический брак АФС и микробиологии:** *Родственные и посторонние примеси, Количественное определение, Подлинность, Стерильность, Микробиологическая чистота, Бактериальные эндотоксины, Пирогенность*. Прямая угроза токсичности или потери эффективности.
-                2. **$W_{\\text{action}, i}$ — Строгость регуляторной меры РЗН:**
-                   - `Отзыв` / `Изъятие` / `Прекращение обращения` = **$1.5$**; `Приостановление` / `Информационное` = **$1.0$**; `Разрешение реализации` = **$0.0$** (исключено из брака).
-                3. **$W_{\\text{chronic}, i} = 1 + 0.25 \\cdot \\ln(N_{\\text{mfg, cat}})$ — Фактор системности / серийности:**
-                   - Повышающий множитель для дефектов Level 2 и Level 3 при повторении однотипного брака у завода на $N > 1$ сериях.
-                4. **$e^{-\\lambda \\cdot \\Delta t_i}$ — Временное затухание (Recency Decay):**
-                   - Свежие забраковки за последние 12 месяцев имеют максимальный вес **$1.0$**, более старые экспоненциально затухают с $\\lambda = 0.50\\text{ год}^{-1}$.
+                1. **Тяжесть брака ($W_{\\text{defect}}$):**
+                   - **Уровень 1 (вес `1.0`) — Только упаковка:** опечатка в маркировке или мятая пачка. Сама таблетка безопасна.
+                   - **Уровень 2 (вес `2.5`) — Проблема с формой:** таблетка плохо растворяется, крошится или изменила цвет. Препарат может не подействовать вовремя.
+                   - **Уровень 3 (вес `5.0`) — Угроза здоровью:** в лекарстве выросли токсичные примеси, нарушена дозировка действующего вещества или препарат нестерилен.
+                2. **Строгость меры Росздравнадзора ($W_{\\text{action}}$):**
+                   - Полный отзыв / изъятие из аптек = **`1.5`**; временная приостановка = **`1.0`**. *(Письма о возврате в оборот после проверки получают вес **`0.0`**).*
+                3. **Штраф за системность ($W_{\\text{chronic}}$):**
+                   - Если завод наступает на одни и те же технологические грабли снова и снова ($N > 1$ серий по одному дефекту), включается повышающий множитель $1 + 0.25 \\cdot \\ln(N)$.
+                4. **Свежесть инцидента ($e^{-\\lambda \\cdot \\Delta t}$):**
+                   - Забраковки за последние **12 месяцев** учитываются на **100%** (вес `1.0`), а старые ошибки 3–5-летней давности плавно теряют вес, чтобы рейтинг отражал текущее состояние завода.
                 """
             )
         with m_col2:
-            st.markdown("#### 🧮 Интерактивный калькулятор-симулятор PRRI")
+            st.markdown("#### 🧮 Калькулятор-симулятор PRRI")
+            st.caption("Подвигайте ползунки, чтобы увидеть, как система оценивает риск разных ситуаций:")
             sim_level = st.selectbox(
-                "Уровень критичности дефекта:",
+                "Какой брак обнаружен?",
                 options=[
-                    ("Level 3: Примеси / Колич. определение / Микробиология (5.0)", 5.0),
-                    ("Level 2: Растворение / Однородность / Описание (2.5)", 2.5),
-                    ("Level 1: Маркировка и упаковка (1.0)", 1.0),
+                    ("Уровень 3: Примеси / Дозировка / Стерильность (вес 5.0)", 5.0),
+                    ("Уровень 2: Растворение / Описание / Однородность (вес 2.5)", 2.5),
+                    ("Уровень 1: Ошибка маркировки или упаковки (вес 1.0)", 1.0),
                 ],
                 format_func=lambda x: x[0],
             )
             sim_action = st.radio(
-                "Регуляторная мера РЗН:",
+                "Решение Росздравнадзора:",
                 options=[("Отзыв / Изъятие (1.5)", 1.5), ("Приостановление (1.0)", 1.0)],
                 format_func=lambda x: x[0],
                 horizontal=True,
             )
-            sim_batches = st.slider("Число серий с этим дефектом у завода (N):", 1, 50, 5)
-            sim_age = st.slider("Возраст письма РЗН (лет):", 0.0, 6.0, 0.5, 0.5)
+            sim_batches = st.slider("Сколько серий с этой проблемой у завода (N):", 1, 50, 5)
+            sim_age = st.slider("Сколько лет прошло с даты письма:", 0.0, 6.0, 0.5, 0.5)
 
             w_def_sim = sim_level[1]
             w_act_sim = sim_action[1]
@@ -726,39 +966,78 @@ def main() -> None:
             batch_total_score = single_score * sim_batches
 
             st.success(
-                f"**Вес 1 серии:** `{single_score:.2f}` "
-                f"($W_{{\\text{{def}}}}={w_def_sim} \\times W_{{\\text{{act}}}}={w_act_sim} "
-                f"\\times W_{{\\text{{chr}}}}={w_chr_sim:.2f} \\times \\text{{Decay}}={decay_sim:.2f}$)  \n"
-                f"**Суммарный вклад {sim_batches} серий в PRRI завода:** **`{batch_total_score:.2f}`**"
+                f"**Балл риска за 1 серию:** `{single_score:.2f}`  \n"
+                f"*(Тяжесть `{w_def_sim}` × Мера `{w_act_sim}` × Системность `{w_chr_sim:.2f}` × Свежесть `{decay_sim:.2f}`)*  \n\n"
+                f"👉 **Итоговый вклад всех {sim_batches} серий в PRRI завода:** **`{batch_total_score:.1f}`**"
             )
 
         st.divider()
-        st.markdown("### 🧪 Проверка статистических гипотез (`scipy.stats`, уровень значимости $\\alpha = 0.05$)")
+        st.markdown("### 🧪 Проверка 4 статистических гипотез на данных 2020–2026 гг.")
+        st.caption(
+            "Мы проверили 4 ключевых предположения о рынке лекарств с помощью строгих математических тестов (`scipy.stats`). "
+            "Ниже — краткая суть того, что мы проверили и какие инсайты получили:"
+        )
+
         hyp = load_hypothesis_results()
 
-        for key in (
-            "h1_origin_vs_defect_level",
-            "h2_dosage_form_vs_tdr",
-            "h3_prri_mann_whitney",
-            "h4_seasonality_kruskal",
-        ):
-            item = hyp[key]
-            badge = "✅ H0 ОТВЕРГНУТА (различия статистически значимы)" if item["reject_h0"] else "⚪ H0 НЕ ОТВЕРГНУТА (значимых различий нет)"
+        # Человекочитаемые короткие карточки для 4 гипотез
+        friendly_cards = [
+            {
+                "key": "h1_origin_vs_defect_level",
+                "question": "1️⃣ Чем отличается брак российских и импортных лекарств?",
+                "verdict": "✅ ПОДТВЕРЖДЕНО: Причины брака кардинально различаются (p < 0.0001)",
+                "insight": (
+                    "**Какой инсайт мы нашли:** У импортных лекарств **35.2% всех проблем — это упаковка и маркировка** "
+                    "(ошибки перевода пачки и комплектации при ввозе в РФ), а технологический брак самой формы составляет лишь **14.6%**. "
+                    "У российских заводов ситуация обратная: проблемы с упаковкой возникают вдвое реже (**15.9%**), "
+                    "зато **38.6% забраковок — это технологический брак самой таблетки или ампулы** (не растворяется, изменила цвет, содержит видимые частицы)."
+                ),
+            },
+            {
+                "key": "h2_dosage_form_vs_tdr",
+                "question": "2️⃣ Какие лекарственные формы сложнее всего производить без тех. брака?",
+                "verdict": "✅ ПОДТВЕРЖДЕНО: Таблетки и капсулы страдают от тех. брака сильнее жидких форм (p < 0.0001)",
+                "insight": (
+                    "**Какой инсайт мы нашли:** В **твердых формах (таблетки и капсулы)** доля реального технологического и химического брака достигает **83.9%** "
+                    "(главные уязвимости — рост примесей и плохое растворение). А в **нестерильных жидкостях (сиропы, капли, растворы)** "
+                    "почти половина всех отзывов (**42.9%**) связана просто с этикеткой и пачкой."
+                ),
+            },
+            {
+                "key": "h3_prri_mann_whitney",
+                "question": "3️⃣ У кого выше итоговый индекс технологического риска PRRI — у заводов РФ или Импорта?",
+                "verdict": "✅ ПОДТВЕРЖДЕНО: У российских площадок медианный риск PRRI в 2.7 раза выше (p = 0.0011)",
+                "insight": (
+                    "**Какой инсайт мы нашли:** Медианный индекс риска российских заводов составляет **4.37** против **1.64** у зарубежных площадок. "
+                    "Главная причина разрыва — **серийная повторяемость брака**: российские заводы из нижней части рейтинга часто допускают повторные отзывы десятков серий одного и того же препарата на протяжении 1–3 лет."
+                ),
+            },
+            {
+                "key": "h4_seasonality_kruskal",
+                "question": "4️⃣ Правда ли, что летом или зимой Росздравнадзор бракует больше лекарств (сезонность)?",
+                "verdict": "⚪ МИФ ОПРОВЕРГНУТ: Календарной сезонности в письмах РЗН нет (p = 0.5269)",
+                "insight": (
+                    "**Какой инсайт мы нашли:** Количество забракованных серий статистически не зависит от времени года (медиана держится на уровне **27–35 серий в месяц** в любом квартале). "
+                    "**Почему так происходит:** Между моментом, когда лекарство перегрели при перевозке летом, и выходом официального письма РЗН проходит **от 3 до 9 месяцев** "
+                    "(пока препарат отберут в аптеке, доставят в федеральную лабораторию и проведут анализы). Эта бюрократическая и лабораторная задержка полностью стирает сезонные пики."
+                ),
+            },
+        ]
+
+        for card in friendly_cards:
+            item = hyp[card["key"]]
             with st.container(border=True):
-                st.markdown(f"#### {item['title']}")
-                st.caption(f"**Метод:** {item['test_name']} | **Статус:** {badge}")
-                hc1, hc2, hc3 = st.columns(3)
-                hc1.metric(f"Статистика ({item['stat_name']})", f"{item['stat_value']}")
-                hc2.metric("p-value", f"{item['p_value']:.4e}" if item["p_value"] < 0.001 else f"{item['p_value']:.4f}")
-                hc3.metric(f"Размер эффекта ({item['effect_size_name']})", f"{item['effect_size_value']}")
+                st.markdown(f"#### {card['question']}")
+                st.markdown(f"**Статистический вердикт:** `{card['verdict']}` | *({item['test_name']}: {item['stat_name']} = {item['stat_value']}, {item['effect_size_name']} = {item['effect_size_value']})*")
+                st.markdown(card["insight"])
 
-                st.markdown(f"- **$H_0$:** {item['h0']}  \n- **$H_1$:** {item['h1']}")
-                st.markdown(f"**Аналитический и доменный вывод:** {item['conclusion']}")
-
-                if "contingency_pct" in item:
-                    st.dataframe(item["contingency_pct"], width="stretch")
-                if "summary_table" in item:
-                    st.dataframe(item["summary_table"], width="stretch", hide_index=True)
+                with st.expander("📊 Показать таблицу с цифрами и формулировку H0 / H1"):
+                    st.markdown(f"- **Нулевая гипотеза ($H_0$):** {item['h0']}\n- **Альтернативная гипотеза ($H_1$):** {item['h1']}")
+                    if "contingency_pct" in item:
+                        st.caption("Распределение в процентах по строкам (%):")
+                        st.dataframe(item["contingency_pct"], width="stretch")
+                    if "summary_table" in item:
+                        st.dataframe(item["summary_table"], width="stretch", hide_index=True)
 
 
 if __name__ == "__main__":
