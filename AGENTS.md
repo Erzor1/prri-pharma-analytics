@@ -95,4 +95,4 @@ PRRI/
   - [x] **Шаг 3:** Проектирование БД (`src/database.py` на SQLAlchemy с поддержкой PostgreSQL 16 + SQLite fallback) и SQL-витрин (`sql/views.sql`, `sql/schema_postgres.sql`) с CTE и оконными функциями.
   - [x] **Шаг 4:** Ноутбук `notebooks/eda_and_hypotheses.ipynb` и модуль `src/stats_tests.py` с исследовательским анализом и проверкой 4 статистических гипотез (`scipy.stats`).
   - [x] **Шаг 5:** Разработка интерактивного веб-приложения `app.py` (Streamlit + Plotly, 4 аналитические вкладки, карточка риска поставщика с Radar Chart, калькулятор PRRI и живая синхронизация с API РЗН).
-  - [ ] **Шаг 6:** Упаковка в `Dockerfile`, `docker-compose.yml`, настройка `.github/workflows/deploy.yml` и написание финального продающего `README.md`.
+  - [x] **Шаг 6:** Упаковка в `Dockerfile`, `docker-compose.yml` (PostgreSQL 16 + Streamlit + Daily Scheduler), настройка `.github/workflows/deploy.yml` и написание финального продающего `README.md`.
