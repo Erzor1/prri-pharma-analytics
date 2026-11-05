@@ -28,6 +28,8 @@ data/raw/*.csv
 data/processed/*.csv
 data/processed/*.parquet
 data/processed/*.db
+data/processed/*.json
+notebooks/пример оформления.ipynb
 
 # OS & IDE files
 .DS_Store

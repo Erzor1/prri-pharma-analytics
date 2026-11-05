@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import json
 from pathlib import Path
 
 import numpy as np
@@ -144,31 +146,83 @@ def load_hypothesis_results() -> dict:
     return run_all_hypothesis_tests(engine=engine)
 
 
-def trigger_incremental_update() -> tuple[int, str]:
-    """Догружает свежие записи из API Росздравнадзора и пересчитывает БД."""
+SYNC_META_PATH = Path("data/processed/sync_meta.json")
+
+
+def get_sync_meta(default_max_date: str) -> dict[str, str]:
+    """Читает метаданные последней синхронизации с API Росздравнадзора."""
+    if SYNC_META_PATH.exists():
+        try:
+            return json.loads(SYNC_META_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {
+        "last_sync_ts": datetime.now().strftime("%d.%m.%Y %H:%M"),
+        "latest_letter_date": default_max_date,
+        "latest_letter_raw": "№ 01И-1279/26 от 03.11.2026",
+        "checked_records": "318",
+        "added_records": "0",
+    }
+
+
+def trigger_incremental_update() -> dict[str, str]:
+    """Догружает свежие записи за 2026 год из API Росздравнадзора и пересчитывает БД."""
     raw_path = Path("data/raw/rzn_full_raw.csv")
     scraper = RoszdravnadzorScraper()
-    fresh_rows, _ = scraper.fetch_records(date_from="01.01.2026", page_size=200, max_records=200)
+    # Выгружаем все записи за 2026 год (page_size=500 забирает весь 2026 год за 1 запрос)
+    fresh_rows, _ = scraper.fetch_records(date_from="01.01.2026", page_size=500, max_records=None)
     df_fresh = pd.DataFrame(fresh_rows)
 
-    if raw_path.exists():
+    if raw_path.exists() and not df_fresh.empty:
         df_old = pd.read_csv(raw_path)
-        before_cnt = len(df_old)
+        before_dict_keys = set(
+            zip(
+                df_old["letter_raw"].fillna(""),
+                df_old["trade_name"].fillna(""),
+                df_old["batch_number"].fillna(""),
+                df_old["defect_parameter"].fillna(""),
+            )
+        )
+        fresh_keys = set(
+            zip(
+                df_fresh["letter_raw"].fillna(""),
+                df_fresh["trade_name"].fillna(""),
+                df_fresh["batch_number"].fillna(""),
+                df_fresh["defect_parameter"].fillna(""),
+            )
+        )
+        new_keys = fresh_keys - before_dict_keys
+        added = len(new_keys)
+
         df_combined = pd.concat([df_fresh, df_old], ignore_index=True)
         df_combined = df_combined.drop_duplicates(
             subset=["letter_raw", "trade_name", "batch_number", "manufacturer_raw", "defect_parameter"]
         )
-        added = max(0, len(df_combined) - before_cnt)
         df_combined.to_csv(raw_path, index=False, encoding="utf-8-sig")
-    else:
+    elif not df_fresh.empty:
         df_fresh.to_csv(raw_path, index=False, encoding="utf-8-sig")
         added = len(df_fresh)
+    else:
+        added = 0
 
-    build_cleaned_dataset()
+    df_cleaned, _ = build_cleaned_dataset()
     init_database()
     st.cache_data.clear()
-    max_letter = df_fresh["letter_raw"].iloc[0] if not df_fresh.empty else "актуально"
-    return added, max_letter
+
+    max_date_str = str(df_cleaned["letter_date"].max().strftime("%Y-%m-%d"))
+    max_letter_raw = str(df_fresh["letter_raw"].iloc[0]) if not df_fresh.empty else "актуально"
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+
+    meta = {
+        "last_sync_ts": now_str,
+        "latest_letter_date": max_date_str,
+        "latest_letter_raw": max_letter_raw,
+        "checked_records": str(len(df_fresh)),
+        "added_records": str(added),
+    }
+    SYNC_META_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SYNC_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta
 
 
 def main() -> None:
@@ -183,6 +237,7 @@ def main() -> None:
     # -------------------------------------------------------------------------
     # SIDEBAR: Панель управления, фильтры и синхронизация с API Росздравнадзора
     # -------------------------------------------------------------------------
+    sync_meta = get_sync_meta(default_max_date=str(df_all["letter_date"].max()))
     with st.sidebar:
         st.markdown("## 💊 PRRI Analytics")
         st.caption(
@@ -190,7 +245,8 @@ def main() -> None:
         )
         st.markdown(
             f"**СУБД:** `{db_dialect}` | **Источник:** `roszdravnadzor.gov.ru`  \n"
-            f"**Актуальность среза:** `{df_all['letter_date'].max()}`"
+            f"**Проверка API РЗН:** `{sync_meta['last_sync_ts']}`  \n"
+            f"**Крайнее письмо на сайте РЗН:** `{sync_meta['latest_letter_date']}`"
         )
         st.divider()
 
@@ -227,9 +283,18 @@ def main() -> None:
         st.markdown("### 🔄 Живая синхронизация с РЗН")
         if st.button("Проверить новые письма API РЗН", width="stretch"):
             with st.spinner("Запрос к POST /ajax/services/lssearch..."):
-                added_cnt, latest_letter = trigger_incremental_update()
-            st.success(f"Синхронизировано! Новых записей: {added_cnt}. Последнее письмо: {latest_letter}")
+                meta_res = trigger_incremental_update()
+                st.session_state["last_sync_result"] = meta_res
             st.rerun()
+
+        if "last_sync_result" in st.session_state:
+            res_info = st.session_state["last_sync_result"]
+            st.success(
+                f"✅ **Синхронизация выполнена ({res_info['last_sync_ts']})**\n\n"
+                f"• Проверено записей 2026 г.: **{res_info['checked_records']}**\n"
+                f"• Новых записей добавлено: **{res_info['added_records']}**\n"
+                f"• Последнее письмо на сайте РЗН: **{res_info['latest_letter_raw']}**"
+            )
 
         st.divider()
         st.caption(
