@@ -25,7 +25,6 @@ data/raw/*.json
 data/raw/*.csv
 !data/raw/sample_100.csv
 !data/raw/sample_100.json
-data/processed/*.csv
 data/processed/*.parquet
 data/processed/*.db
 data/processed/*.json
