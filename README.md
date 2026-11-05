@@ -7,7 +7,7 @@
 ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?logo=streamlit&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-**Автор:** Бурляев Д.В. *(6+ лет опыта в R&D фармацевтики и разработке твердых лекарственных форм → Аналитик данных)*  
+**Автор:** Бурляев Д.В. *(6+ лет опыта в R&D фармацевтике и разработке твердых лекарственных форм → Аналитик данных)*  
 🌐 **Живой интерактивный дашборд (доступен в браузере):** **[https://prri-pharma-analytics.streamlit.app/](https://prri-pharma-analytics.streamlit.app/)**
 
 ---
