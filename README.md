@@ -1,12 +1,14 @@
 # 💊 Мониторинг и скоринг технологического брака лекарственных средств в РФ (на данных Росздравнадзора)
 
+[![Открыть живой дашборд в Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://prri-pharma-analytics.streamlit.app/)
 ![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white)
 ![SQL](https://img.shields.io/badge/SQL-CTE%20%26%20Window%20Functions-CC2927)
 ![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?logo=streamlit&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-**Автор:** Бурляев Д.В. *(6+ лет опыта в R&D фармацевтики и разработке твердых лекарственных форм → Аналитик данных)*
+**Автор:** Бурляев Д.В. *(6+ лет опыта в R&D фармацевтики и разработке твердых лекарственных форм → Аналитик данных)*  
+🌐 **Живой интерактивный дашборд (доступен в браузере):** **[https://prri-pharma-analytics.streamlit.app/](https://prri-pharma-analytics.streamlit.app/)**
 
 ---
 
