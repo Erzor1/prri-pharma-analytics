@@ -36,8 +36,17 @@ jobs:
     needs: ci-test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    env:
+      VPS_HOST_CHECK: ${{ secrets.VPS_HOST }}
     steps:
+      - name: Check if VPS SSH secrets are configured
+        run: |
+          if [ -z "$VPS_HOST_CHECK" ]; then
+            echo "Секрет VPS_HOST еще не задан в настройках репозитория GitHub. Пропускаем шаг SSH-деплоя."
+          fi
+
       - name: Deploy via SSH to Production VPS
+        if: env.VPS_HOST_CHECK != ''
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
