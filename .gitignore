@@ -30,6 +30,9 @@ data/processed/*.db
 data/processed/*.json
 notebooks/пример оформления.ipynb
 
+# Локальные служебные скрипты (не для публичного репозитория)
+запустить-дашборд.bat
+
 # OS & IDE files
 .DS_Store
 Thumbs.db
