@@ -8,7 +8,8 @@
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
 **Автор:** Бурляев Д.В. *(6+ лет опыта в R&D фармацевтике и разработке твердых лекарственных форм → Аналитик данных)*  
-🌐 **Живой интерактивный дашборд (доступен в браузере):** **[https://prri-pharma-analytics.streamlit.app/](https://prri-pharma-analytics.streamlit.app/)**
+🌐 **Живой интерактивный дашборд (доступен в браузере):** **[https://prri-pharma-analytics.streamlit.app/](https://prri-pharma-analytics.streamlit.app/)**  
+*(публичная демо-версия работает на срезе данных, зафиксированном в репозитории; кнопка живой синхронизации с API Росздравнадзора в ней отключена и доступна только при локальном запуске)*
 
 ---
 

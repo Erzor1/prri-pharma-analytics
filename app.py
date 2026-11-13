@@ -7,8 +7,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 
 import numpy as np
 import pandas as pd
@@ -93,36 +96,101 @@ def render_kpi_card(title: str, value: str, subtitle: str) -> None:
     )
 
 
-def ensure_data_ready() -> None:
-    """Проверяет наличие подготовленной БД; при первом старте контейнера собирает витрины."""
-    raw_path = Path("data/raw/rzn_full_raw.csv")
-    cleaned_path = Path("data/processed/rzn_cleaned.csv")
-    mfg_path = Path("data/processed/manufacturers_prri.csv")
+RAW_CSV_PATH = Path("data/raw/rzn_full_raw.csv")
+CLEANED_CSV_PATH = Path("data/processed/rzn_cleaned.csv")
+MFG_CSV_PATH = Path("data/processed/manufacturers_prri.csv")
+SYNC_META_PATH = Path("data/processed/sync_meta.json")
+DB_MANIFEST_PATH = Path("data/processed/.db_manifest.json")
+BACKUP_DIR = Path("data/processed/.backup")
 
-    if not raw_path.exists():
+# Streamlit Community Cloud разворачивает приложение из каталога /mount/src.
+# В облаке файловая система контейнера одноразовая и доступ к .gov.ru нестабилен,
+# поэтому «живая синхронизация» там отключена (кнопка-заглушка).
+IS_CLOUD = Path("/mount/src").exists() or os.getenv("STREAMLIT_CLOUD", "").strip() == "1"
+
+
+def count_csv_rows(path: Path) -> int:
+    """Быстро считает число строк данных в CSV без его полной загрузки в память."""
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="ignore") as fh:
+            return max(0, sum(1 for _ in fh) - 1)
+    except OSError:
+        return 0
+
+
+def dataset_fingerprint(*paths: Path) -> str:
+    """Контрольная сумма CSV-снимков: позволяет понять, что БД устарела и её надо пересобрать."""
+    digest = hashlib.sha256()
+    for path in paths:
+        try:
+            with path.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    digest.update(chunk)
+        except OSError:
+            return ""
+    return digest.hexdigest()[:16]
+
+
+def read_db_manifest() -> dict:
+    try:
+        return json.loads(DB_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def rebuild_database() -> None:
+    """Перезаливает факты и витрины в СУБД и фиксирует отпечаток CSV-снимков."""
+    init_database(cleaned_csv_path=CLEANED_CSV_PATH, mfg_csv_path=MFG_CSV_PATH)
+    manifest = {
+        "fingerprint": dataset_fingerprint(CLEANED_CSV_PATH, MFG_CSV_PATH),
+        "built_at": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        "cleaned_rows": count_csv_rows(CLEANED_CSV_PATH),
+        "mfg_rows": count_csv_rows(MFG_CSV_PATH),
+    }
+    DB_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DB_MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def ensure_data_ready() -> None:
+    """
+    Готовит данные к показу:
+    1) при первом старте собирает очищенный датасет из сырой выгрузки;
+    2) пересобирает БД и SQL-витрины, если CSV-снимки изменились (например, после git push
+       на Streamlit Cloud, где файл БД не хранится в репозитории и может быть устаревшим).
+    """
+    if not RAW_CSV_PATH.exists():
         sample_path = Path("data/raw/sample_100.csv")
-        if sample_path.exists() and not cleaned_path.exists():
+        if sample_path.exists() and not CLEANED_CSV_PATH.exists():
             with st.spinner("Первичная выгрузка реестра Росздравнадзора (2020–2026)..."):
                 scraper = RoszdravnadzorScraper()
                 parsed_rows, _ = scraper.fetch_records(date_from="01.01.2020", page_size=500, max_records=None)
-                raw_path.parent.mkdir(parents=True, exist_ok=True)
-                pd.DataFrame(parsed_rows).to_csv(raw_path, index=False, encoding="utf-8-sig")
+                RAW_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+                pd.DataFrame(parsed_rows).to_csv(RAW_CSV_PATH, index=False, encoding="utf-8-sig")
 
-    if raw_path.exists() and (not cleaned_path.exists() or not mfg_path.exists()):
+    if RAW_CSV_PATH.exists() and (not CLEANED_CSV_PATH.exists() or not MFG_CSV_PATH.exists()):
         with st.spinner("Очистка данных и расчет индекса PRRI..."):
             build_cleaned_dataset(
-                raw_csv_path=raw_path,
-                cleaned_csv_path=cleaned_path,
-                mfg_csv_path=mfg_path,
+                raw_csv_path=RAW_CSV_PATH,
+                cleaned_csv_path=CLEANED_CSV_PATH,
+                mfg_csv_path=MFG_CSV_PATH,
             )
+
+    if not CLEANED_CSV_PATH.exists() or not MFG_CSV_PATH.exists():
+        return
 
     engine = get_db_engine()
     try:
         query_df("SELECT 1 FROM v_manufacturer_risk_ranking LIMIT 1", engine=engine)
+        views_ready = True
     except Exception:
-        if cleaned_path.exists() and mfg_path.exists():
-            with st.spinner("Инициализация реляционной БД и SQL-витрин..."):
-                init_database(cleaned_csv_path=cleaned_path, mfg_csv_path=mfg_path)
+        views_ready = False
+
+    fingerprint = dataset_fingerprint(CLEANED_CSV_PATH, MFG_CSV_PATH)
+    if views_ready and fingerprint and read_db_manifest().get("fingerprint") == fingerprint:
+        return
+
+    with st.spinner("Инициализация реляционной БД и SQL-витрин..."):
+        rebuild_database()
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -149,97 +217,144 @@ def load_hypothesis_results() -> dict:
 SYNC_META_PATH = Path("data/processed/sync_meta.json")
 
 
-def get_sync_meta(default_max_date: str) -> dict[str, str]:
-    """Читает метаданные последней синхронизации с API Росздравнадзора."""
+def get_sync_meta() -> dict[str, str]:
+    """Читает метаданные последней успешной синхронизации с API РЗН (создаются локально)."""
     if SYNC_META_PATH.exists():
         try:
-            return json.loads(SYNC_META_PATH.read_text(encoding="utf-8"))
+            meta = json.loads(SYNC_META_PATH.read_text(encoding="utf-8"))
+            if isinstance(meta, dict):
+                return meta
         except Exception:
             pass
-    return {
-        "last_sync_ts": datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "latest_letter_date": default_max_date,
-        "latest_letter_raw": "№ 01И-1279/26 от 03.11.2026",
-        "checked_records": "318",
-        "added_records": "0",
-    }
+    return {}
 
 
-def trigger_incremental_update() -> dict[str, str]:
-    """Догружает свежие записи за 2026 год из API Росздравнадзора и пересчитывает БД."""
-    raw_path = Path("data/raw/rzn_full_raw.csv")
-    cleaned_path = Path("data/processed/rzn_cleaned.csv")
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+def _sync_keyset(df: pd.DataFrame) -> set[tuple]:
+    """Ключ записи реестра РЗН для дедупликации при слиянии выгрузок."""
+    key_cols = ["letter_raw", "trade_name", "batch_number", "manufacturer_raw", "defect_parameter"]
+    if df.empty or any(col not in df.columns for col in key_cols):
+        return set()
+    return set(zip(*(df[col].fillna("").astype(str) for col in key_cols)))
 
-    try:
-        scraper = RoszdravnadzorScraper(timeout=12, max_retries=2)
-        fresh_rows, _ = scraper.fetch_records(date_from="01.01.2026", page_size=500, max_records=None)
-        df_fresh = pd.DataFrame(fresh_rows)
-    except Exception:
-        # Если облачный сервер находится за пределами РФ и госсайт roszdravnadzor.gov.ru блокирует зарубежный IP
-        df_existing = pd.read_csv(cleaned_path) if cleaned_path.exists() else pd.DataFrame()
-        max_date_str = str(df_existing["letter_date"].max()) if not df_existing.empty else "2026-11-03"
-        meta = {
-            "last_sync_ts": now_str,
-            "latest_letter_date": max_date_str,
-            "latest_letter_raw": "№ 01И-1279/26 от 03.11.2026 (кэш среза — доступ к .gov.ru с зарубежного IP облака ограничен)",
-            "checked_records": "318 (кэш)",
-            "added_records": "0",
-        }
-        SYNC_META_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SYNC_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        return meta
 
-    if raw_path.exists() and not df_fresh.empty:
-        df_old = pd.read_csv(raw_path)
-        before_dict_keys = set(
-            zip(
-                df_old["letter_raw"].fillna(""),
-                df_old["trade_name"].fillna(""),
-                df_old["batch_number"].fillna(""),
-                df_old["defect_parameter"].fillna(""),
-            )
-        )
-        fresh_keys = set(
-            zip(
-                df_fresh["letter_raw"].fillna(""),
-                df_fresh["trade_name"].fillna(""),
-                df_fresh["batch_number"].fillna(""),
-                df_fresh["defect_parameter"].fillna(""),
-            )
-        )
-        new_keys = fresh_keys - before_dict_keys
-        added = len(new_keys)
-
-        df_combined = pd.concat([df_fresh, df_old], ignore_index=True)
-        df_combined = df_combined.drop_duplicates(
-            subset=["letter_raw", "trade_name", "batch_number", "manufacturer_raw", "defect_parameter"]
-        )
-        df_combined.to_csv(raw_path, index=False, encoding="utf-8-sig")
-    elif not df_fresh.empty:
-        df_fresh.to_csv(raw_path, index=False, encoding="utf-8-sig")
-        added = len(df_fresh)
-    else:
-        added = 0
-
-    df_cleaned, _ = build_cleaned_dataset()
-    init_database()
-    st.cache_data.clear()
-
-    max_date_str = str(df_cleaned["letter_date"].max().strftime("%Y-%m-%d"))
-    max_letter_raw = str(df_fresh["letter_raw"].iloc[0]) if not df_fresh.empty else "актуально"
-    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-
-    meta = {
-        "last_sync_ts": now_str,
-        "latest_letter_date": max_date_str,
-        "latest_letter_raw": max_letter_raw,
-        "checked_records": str(len(df_fresh)),
-        "added_records": str(added),
-    }
+def _write_sync_meta(meta: dict[str, str]) -> dict[str, str]:
     SYNC_META_PATH.parent.mkdir(parents=True, exist_ok=True)
     SYNC_META_PATH.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta
+
+
+def _restore_backup() -> None:
+    """Откатывает CSV-снимки и БД из резервной копии, если пересборка потеряла историю."""
+    for name, target in (
+        ("rzn_full_raw.csv", RAW_CSV_PATH),
+        ("rzn_cleaned.csv", CLEANED_CSV_PATH),
+        ("manufacturers_prri.csv", MFG_CSV_PATH),
+    ):
+        backup_file = BACKUP_DIR / name
+        if backup_file.exists():
+            shutil.copy2(backup_file, target)
+    rebuild_database()
+    st.cache_data.clear()
+
+
+def trigger_incremental_update() -> dict[str, str]:
+    """
+    Догружает свежие записи из API Росздравнадзора и пересчитывает метрики и БД.
+
+    Запускается только в локальной версии дашборда. Ключевая защита: если полной выгрузки
+    (2020+) нет, запрашивается весь период, а результат сверяется с предыдущим срезом —
+    чтобы частичная выгрузка не «затёрла» историю данных.
+    """
+    date_from = "01.01.2026" if RAW_CSV_PATH.exists() else "01.01.2020"
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    rows_before = count_csv_rows(CLEANED_CSV_PATH)
+
+    # Резервная копия перед любыми изменениями файлов
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    for source in (RAW_CSV_PATH, CLEANED_CSV_PATH, MFG_CSV_PATH):
+        if source.exists():
+            shutil.copy2(source, BACKUP_DIR / source.name)
+
+    try:
+        scraper = RoszdravnadzorScraper(timeout=20, max_retries=3)
+        fresh_rows, _ = scraper.fetch_records(date_from=date_from, page_size=500, max_records=None)
+        df_fresh = pd.DataFrame(fresh_rows)
+    except Exception as exc:
+        return _write_sync_meta(
+            {
+                "last_sync_ts": now_str,
+                "latest_letter_date": _data_snapshot_date(),
+                "latest_letter_raw": f"нет связи с API РЗН ({exc.__class__.__name__}) — показан сохранённый срез",
+                "checked_records": "0",
+                "added_records": "0",
+                "status": "api_unavailable",
+            }
+        )
+
+    if df_fresh.empty:
+        return _write_sync_meta(
+            {
+                "last_sync_ts": now_str,
+                "latest_letter_date": _data_snapshot_date(),
+                "latest_letter_raw": "API РЗН не вернуло записей — сохранён прежний срез",
+                "checked_records": "0",
+                "added_records": "0",
+                "status": "empty_response",
+            }
+        )
+
+    if RAW_CSV_PATH.exists():
+        df_old = pd.read_csv(RAW_CSV_PATH)
+        added = len(_sync_keyset(df_fresh) - _sync_keyset(df_old))
+        df_combined = pd.concat([df_fresh, df_old], ignore_index=True)
+    else:
+        added = len(df_fresh)
+        df_combined = df_fresh
+
+    df_combined = df_combined.drop_duplicates(
+        subset=["letter_raw", "trade_name", "batch_number", "manufacturer_raw", "defect_parameter"]
+    )
+    RAW_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df_combined.to_csv(RAW_CSV_PATH, index=False, encoding="utf-8-sig")
+
+    df_cleaned, _ = build_cleaned_dataset(
+        raw_csv_path=RAW_CSV_PATH,
+        cleaned_csv_path=CLEANED_CSV_PATH,
+        mfg_csv_path=MFG_CSV_PATH,
+    )
+
+    if rows_before > 1000 and len(df_cleaned) < rows_before * 0.9:
+        _restore_backup()
+        raise RuntimeError(
+            f"Пересборка отменена: получено {len(df_cleaned)} строк вместо {rows_before}. "
+            "Срез восстановлен из резервной копии — проверьте полноту выгрузки API."
+        )
+
+    rebuild_database()
+    st.cache_data.clear()
+
+    latest_row = df_cleaned.loc[pd.to_datetime(df_cleaned["letter_date"]).idxmax()]
+    latest_letter = str(latest_row.get("letter_raw") or latest_row.get("letter_number") or "").strip()
+
+    return _write_sync_meta(
+        {
+            "last_sync_ts": now_str,
+            "latest_letter_date": str(pd.to_datetime(latest_row["letter_date"]).strftime("%Y-%m-%d")),
+            "latest_letter_raw": latest_letter,
+            "checked_records": str(len(df_fresh)),
+            "added_records": str(added),
+            "status": "ok",
+        }
+    )
+
+
+def _data_snapshot_date() -> str:
+    """Дата последнего письма РЗН в текущем срезе данных."""
+    try:
+        df = pd.read_csv(CLEANED_CSV_PATH, usecols=["letter_date"])
+        return str(pd.to_datetime(df["letter_date"]).max().strftime("%Y-%m-%d"))
+    except Exception:
+        return "—"
 
 
 def main() -> None:
@@ -251,10 +366,26 @@ def main() -> None:
     df_chronic = data["v_chronic"]
     db_dialect = data["db_dialect"]["dialect"].iloc[0]
 
+    if df_all.empty:
+        st.error(
+            "Не удалось загрузить данные Росздравнадзора: таблица фактов пуста. "
+            "Проверьте наличие и корректность файлов data/processed/rzn_cleaned.csv и manufacturers_prri.csv."
+        )
+        st.stop()
+
     # -------------------------------------------------------------------------
     # SIDEBAR: Панель управления, фильтры и синхронизация с API Росздравнадзора
     # -------------------------------------------------------------------------
-    sync_meta = get_sync_meta(default_max_date=str(df_all["letter_date"].max()))
+    sync_meta = get_sync_meta()
+    years_available = sorted(
+        {int(year) for year in pd.to_numeric(df_all["year"], errors="coerce").dropna().unique()}
+    )
+    min_year, max_year = years_available[0], years_available[-1]
+    last_letter_dt = pd.to_datetime(df_all["letter_date"], errors="coerce").max()
+    data_snapshot = "—" if pd.isna(last_letter_dt) else last_letter_dt.strftime("%d.%m.%Y")
+    rows_total = f"{len(df_all):,}".replace(",", " ")
+    api_checked = sync_meta.get("last_sync_ts") or "—"
+
     with st.sidebar:
         st.markdown("## 💊 PRRI Analytics")
         st.caption(
@@ -262,20 +393,23 @@ def main() -> None:
         )
         st.markdown(
             f"**СУБД:** `{db_dialect}` | **Источник:** `roszdravnadzor.gov.ru`  \n"
-            f"**Проверка API РЗН:** `{sync_meta['last_sync_ts']}`  \n"
-            f"**Крайнее письмо на сайте РЗН:** `{sync_meta['latest_letter_date']}`"
+            f"**Срез данных:** `{data_snapshot}` · `{rows_total}` записей ({min_year}–{max_year})  \n"
+            f"**Проверка API РЗН:** `{api_checked}`"
         )
         st.divider()
 
         st.markdown("### 🔍 Глобальные фильтры")
-        min_year = int(df_all["year"].min())
-        max_year = int(df_all["year"].max())
-        selected_years = st.slider(
-            "Период писем Росздравнадзора (годы):",
-            min_value=min_year,
-            max_value=max_year,
-            value=(min_year, max_year),
-        )
+        if min_year < max_year:
+            selected_years = st.slider(
+                "Период писем Росздравнадзора (годы):",
+                min_value=min_year,
+                max_value=max_year,
+                value=(min_year, max_year),
+            )
+        else:
+            # Защита от падения: st.slider требует min_value < max_value
+            selected_years = (min_year, max_year)
+            st.caption(f"В текущем срезе данных доступен только {min_year} год.")
 
         origin_options = ["Все площадки", "Отечественный (РФ)", "Зарубежный (Импорт)"]
         selected_origin = st.selectbox("Локализация производства:", origin_options, index=0)
@@ -297,21 +431,50 @@ def main() -> None:
         )
 
         st.divider()
-        st.markdown("### 🔄 Живая синхронизация с РЗН")
-        if st.button("Проверить новые письма API РЗН", width="stretch"):
-            with st.spinner("Запрос к POST /ajax/services/lssearch..."):
-                meta_res = trigger_incremental_update()
-                st.session_state["last_sync_result"] = meta_res
-            st.rerun()
-
-        if "last_sync_result" in st.session_state:
-            res_info = st.session_state["last_sync_result"]
-            st.success(
-                f"✅ **Синхронизация выполнена ({res_info['last_sync_ts']})**\n\n"
-                f"• Проверено записей 2026 г.: **{res_info['checked_records']}**\n"
-                f"• Новых записей добавлено: **{res_info['added_records']}**\n"
-                f"• Последнее письмо на сайте РЗН: **{res_info['latest_letter_raw']}**"
+        st.markdown("### 🔄 Синхронизация с API РЗН")
+        if IS_CLOUD:
+            # Публичная демо-версия: кнопка-заглушка, чтобы посетитель не мог изменить данные
+            st.button(
+                "Проверить новые письма API РЗН",
+                width="stretch",
+                disabled=True,
+                help="В публичной демо-версии синхронизация отключена: данные обновляются в локальной среде разработчика.",
             )
+            st.caption(
+                "🔒 **Демо-версия.** Витрина работает на срезе данных, зафиксированном в репозитории. "
+                "Живая синхронизация с API Росздравнадзора доступна только в локальной версии дашборда."
+            )
+        else:
+            if st.button("Проверить новые письма API РЗН", width="stretch"):
+                with st.spinner("Запрос к POST /ajax/services/lssearch..."):
+                    try:
+                        st.session_state["last_sync_result"] = trigger_incremental_update()
+                    except Exception as exc:
+                        st.session_state["last_sync_result"] = {
+                            "last_sync_ts": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+                            "latest_letter_date": "—",
+                            "latest_letter_raw": f"ошибка синхронизации: {exc}",
+                            "checked_records": "0",
+                            "added_records": "0",
+                            "status": "error",
+                        }
+                st.rerun()
+
+            if "last_sync_result" in st.session_state:
+                res_info = st.session_state["last_sync_result"]
+                if res_info.get("status") == "ok":
+                    st.success(
+                        f"✅ **Синхронизация выполнена ({res_info['last_sync_ts']})**\n\n"
+                        f"• Проверено записей: **{res_info['checked_records']}**\n"
+                        f"• Новых записей добавлено: **{res_info['added_records']}**\n"
+                        f"• Последнее письмо в базе: **{res_info['latest_letter_raw']}**"
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ **Синхронизация не выполнена ({res_info['last_sync_ts']})**\n\n"
+                        f"• {res_info['latest_letter_raw']}\n"
+                        f"• Показан прежний срез данных — он не изменён."
+                    )
 
         st.divider()
         st.caption(

@@ -28,6 +28,7 @@ data/raw/*.csv
 data/processed/*.parquet
 data/processed/*.db
 data/processed/*.json
+data/processed/.backup/
 notebooks/пример оформления.ipynb
 
 # Локальные служебные скрипты (не для публичного репозитория)
