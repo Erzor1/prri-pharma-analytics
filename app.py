@@ -391,10 +391,15 @@ def main() -> None:
         st.caption(
             "Мониторинг и скоринг технологического брака, отзывов и стабильности ЛС на рынке РФ"
         )
+        mode_line = (
+            "**Режим:** `демо` — срез данных зафиксирован в репозитории"
+            if IS_CLOUD
+            else f"**Проверка API РЗН:** `{api_checked}`"
+        )
         st.markdown(
             f"**СУБД:** `{db_dialect}` | **Источник:** `roszdravnadzor.gov.ru`  \n"
             f"**Срез данных:** `{data_snapshot}` · `{rows_total}` записей ({min_year}–{max_year})  \n"
-            f"**Проверка API РЗН:** `{api_checked}`"
+            f"{mode_line}"
         )
         st.divider()
 
